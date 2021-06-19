@@ -1,5 +1,5 @@
 # Selected-Statistics-Coursework-Project
-This repo contains some selected coursework projects in UIC undergraduate statistics course
+This repo contains some selected coursework Group projects in UIC undergraduate statistics course
 
 # 1. Regression Analysis: Nonlinear Regression - The Gauss-Newton Estimation
 This project mainly focus on introducing the algorithm of Gauss-Newton Estimation and R code implementation. The motivation, properties of estimation, an example, and further discussion of the algorithm are also included.
