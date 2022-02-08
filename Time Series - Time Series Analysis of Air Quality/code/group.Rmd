@@ -1,0 +1,307 @@
+---
+title: "Time Series Analysis"
+output: html_document
+---
+
+
+# Part 1 Data Preprocessing and Analysis
+
+### the package we used
+```{r message=FALSE, warning=FALSE}
+library(readxl)
+library(readr)
+library(lubridate)
+library(ggplot2)
+library(ggthemes)
+library(openair)
+library(stats)
+library(dplyr)
+library(lmtest)
+library(tseries)  
+library(forecast)
+library(urca)
+```
+
+### load data
+```{r}
+AQI <- read_csv("Shanghai AQI and Wheather 2014-2021.csv")
+shanghai  <- read_csv("shanghai-air-quality.csv")
+shanghai$date <- as.Date(shanghai$date, format = "%Y/%m/%d")
+AQI$date <- as.Date(AQI$date,format = "%Y/%m/%d")
+summaryPlot(shanghai)
+```
+
+### build the ts sequence 
+```{r}
+aqits <- ts(AQI$AQI,start = 2014-01-01,frequency = 365)
+plot.ts(aqits)
+ggplot(data = AQI,aes(x = AQI))+geom_histogram(aes(y=..density..), binwidth=20, colour="black", fill="white")+geom_density(alpha=.5, fill="lightblue") + theme_calc()
+ggplot(data = AQI)+geom_boxplot(aes(y = AQI),fill = "lightblue")+theme_calc()
+```
+
+### find the seasonal 
+```{r}
+winter <- AQI[month(AQI$date)==12|month(AQI$date)==1|month(AQI$date)==2,]
+spring <- AQI[month(AQI$date)==3|month(AQI$date)==4|month(AQI$date)==5,]
+summer <- AQI[month(AQI$date)==6|month(AQI$date)==7|month(AQI$date)==8,]
+fall <- AQI[month(AQI$date)==9|month(AQI$date)==10|month(AQI$date)==11,]
+season <- c(rep('3-5 spring',time = dim(spring)[1]),rep('6-8 summer',time = dim(summer)[1]),rep('9-11 fall',time = dim(fall)[1]),rep('12-2 winter',time = dim(winter)[1]))
+
+cc <- rbind.data.frame(spring,summer,fall,winter)
+cc <- cbind.data.frame(cc,season)
+
+co <- c("#6699cc","#99cc66","#d2d279","#cc9966")
+ggplot()+ geom_violin(data = cc, aes(x = season,y = AQI, fill = season)) + theme_calc()+scale_fill_manual(values = co) 
+
+```
+
+### create the month average ts
+```{r}
+moth <- AQI%>% mutate(month = format(date,"%Y/%m")) %>% group_by(month) %>% summarise(mean_by_month = mean(AQI)) 
+mots <- ts(moth$mean_by_month,frequency = 12,start = 2014/01)
+plot(mots)
+```
+
+# Part 2 holt-winters
+### bulid model
+```{r}
+fi1 <- hw(mots,seasonal = "additive")
+fi2 <- hw(mots,seasonal = "multiplicative")
+```
+
+### fitted
+```{r}
+autoplot(mots) +autolayer(fi1$fitted, series="HW additive forecasts")+autolayer(fi2$fitted, series="HW multiplicative forecasts")   + xlab("Year") +ylab("AQI") +guides(colour=guide_legend(title="Forecast"))+theme_classic()
+
+
+```
+
+### forecast
+```{r}
+autoplot(mots) +autolayer(fi1, series="HW additive forecasts")  + xlab("Year") +ylab("AQI") +guides(colour=guide_legend(title="Forecast"))
+autoplot(mots) +autolayer(fi2, series="HW multiplicative forecasts") + xlab("Year") +ylab("AQI") +guides(colour=guide_legend(title="Forecast"))+theme_classic()
+
+```
+
+### 4 in 1 plot for fi1
+```{r}
+par(mfrow=c(2,2))
+plot(fi1$residuals, main = "Residuals")
+title(sub='(a)') 
+plot(as.vector(fi1$fitted),as.vector(fi1$residuals),xlab='Fitted value', ylab='Residual')
+title(sub='(b)') 
+hist(fi1$residuals)
+title(sub='(c)') 
+qqnorm(fi1$residuals);
+qqline(fi1$residuals)
+title(sub='(d)')
+```
+
+
+### 4 in 1 plot for fi2
+```{r}
+par(mfrow=c(2,2))
+plot(fi2$residuals, main = "Residuals")
+title(sub='(a)') 
+plot(as.vector(fi2$fitted),as.vector(fi2$residuals),xlab='Fitted value', ylab='Residual')
+title(sub='(b)') 
+hist(fi2$residuals)
+title(sub='(c)') 
+qqnorm(fi2$residuals);
+qqline(fi2$residuals)
+title(sub='(d)')
+```
+
+### Ljung-Box Test
+```{r}
+Box.test(fi1$residuals,lag = 1,type = "Ljung-Box")
+Box.test(fi2$residuals,lag = 1,type = "Ljung-Box")
+accuracy(fi1)
+accuracy(fi2)
+```
+
+# Part 3 ARIMA Model
+### test of stationary
+```{r}
+adf.test(mots,alt = "stationary")
+par(mfrow = c(1,2))
+acf(as.vector(mots))
+pacf(as.vector(mots))
+```
+
+### take diff for seasonl
+```{r}
+diff_seasonal = diff(mots,lag = 12)
+plot.ts(diff_seasonal)
+par(mfrow = c(1,2))
+acf(as.vector(diff_seasonal))
+pacf(as.vector(diff_seasonal))
+```
+
+```{r}
+diff = diff(diff_seasonal,difference = 1)
+plot.ts(diff)
+par(mfrow = c(1,2))
+acf(as.vector(diff))
+pacf(as.vector(diff))
+```
+
+### choose model depends on optimization
+```{r}
+aics <- matrix(0,6,6,dimnames = list(p = 0:5, q = 0:5))
+
+for (q in 1:5){
+  aics[1,1+q] <- arima(mots,c(0,1,q))$aic
+}
+
+for (p in 1:5){
+  for (q in 0:5){
+    aics[1+p,1+q] <- arima(mots,c(p,1,q))$aic
+  }
+}
+
+aics
+```
+
+### build model
+```{r}
+Model1 <- forecast::Arima(mots,order=c(4,1,5),method="ML")
+Model2 <- auto.arima(mots)
+Model3 <- forecast::Arima(diff,order = c(4,0,3),method = "ML")
+Model4 <- forecast::Arima(diff,order = c(3,0,3),method = "ML")
+```
+
+## residual
+### model 1
+```{r}
+n = length(mots)
+x = seq(1,n)
+fitted1 = as.vector(Model1$fitted)
+par(mfrow=c(2, 2))
+qqnorm(resid(Model1), main = NA,xlab = "Theoretical Quantiles", ylab = "Sample Quantiles")
+qqline(resid(Model1))     
+title(sub="(a) NPP of residuals")
+
+plot(fitted1, resid(Model1), xlab="Fitted value", ylab="Residual")
+points(fitted1, rep(0, n),type = "l")
+title(sub="(b) Residual vs. fitted")
+
+hist(resid(Model1), xlab="Residual", main=NA)
+title(sub="(c) Histogram of residuals")
+
+plot(x, resid(Model1), type='l', xlab="Observation order", ylab="Residual")
+points(x, resid(Model1), pch=19)
+points(x, rep(0, n), type='l')
+title(sub="(d) Residual vs. order")
+
+```
+
+### model 2
+```{r}
+n = length(mots)
+x = seq(1,n)
+fitted2 = as.vector(Model2$fitted)
+par(mfrow=c(2, 2))
+qqnorm(resid(Model2), main = NA,xlab = "Theoretical Quantiles", ylab = "Sample Quantiles")
+qqline(resid(Model2))     
+title(sub="(a) NPP of residuals")
+
+plot(fitted2, resid(Model2), xlab="Fitted value", ylab="Residual")
+points(fitted2, rep(0, n),type = "l")
+title(sub="(b) Residual vs. fitted")
+
+hist(resid(Model2), xlab="Residual", main=NA)
+title(sub="(c) Histogram of residuals")
+
+plot(x, resid(Model2), type='l', xlab="Observation order", ylab="Residual")
+points(x, resid(Model2), pch=19)
+points(x, rep(0, n), type='l')
+title(sub="(d) Residual vs. order")
+```
+
+### model 3
+```{r}
+n = length(diff)
+x = seq(1,n)
+fitted3 = as.vector(Model3$fitted)
+par(mfrow=c(2, 2))
+qqnorm(resid(Model3), main = NA,xlab = "Theoretical Quantiles", ylab = "Sample Quantiles")
+qqline(resid(Model3))     
+title(sub="(a) NPP of residuals")
+
+plot(fitted3, resid(Model3), xlab="Fitted value", ylab="Residual")
+points(fitted3, rep(0, n),type = "l")
+title(sub="(b) Residual vs. fitted")
+
+hist(resid(Model3), xlab="Residual", main=NA)
+title(sub="(c) Histogram of residuals")
+
+plot(x, resid(Model3), type='l', xlab="Observation order", ylab="Residual")
+points(x, resid(Model3), pch=19)
+points(x, rep(0, n), type='l')
+title(sub="(d) Residual vs. order")
+```
+
+### model 4
+```{r}
+n = length(diff)
+x = seq(1,n)
+fitted4 = as.vector(Model4$fitted)
+par(mfrow=c(2, 2))
+qqnorm(resid(Model4), main = NA,xlab = "Theoretical Quantiles", ylab = "Sample Quantiles")
+qqline(resid(Model4))     
+title(sub="(a) NPP of residuals")
+
+plot(fitted4, resid(Model4), xlab="Fitted value", ylab="Residual")
+points(fitted4, rep(0, n),type = "l")
+title(sub="(b) Residual vs. fitted")
+
+hist(resid(Model4), xlab="Residual", main=NA)
+title(sub="(c) Histogram of residuals")
+
+plot(x, resid(Model4), type='l', xlab="Observation order", ylab="Residual")
+points(x, resid(Model4), pch=19)
+points(x, rep(0, n), type='l')
+title(sub="(d) Residual vs. order")
+
+```
+
+## Ljung-Box Test and dwtest
+### model1
+```{r}
+my.residual = resid(Model1)
+Box.test(my.residual, lag = 12, type = c("Ljung-Box"))
+dwtest(my.residual ~ fitted(Model1))
+```
+
+### model2
+```{r}
+my.residual = resid(Model2)
+Box.test(my.residual, lag = 12, type = c("Ljung-Box"))
+dwtest(my.residual ~ fitted(Model2))
+```
+
+### model3
+```{r}
+my.residual = resid(Model3)
+Box.test(my.residual, lag = 12, type = c("Ljung-Box"))
+dwtest(my.residual ~ fitted(Model3))
+```
+
+### model4
+```{r}
+my.residual = resid(Model4)
+Box.test(my.residual, lag = 12, type = c("Ljung-Box"))
+dwtest(my.residual ~ fitted(Model4))
+```
+
+
+## forecast
+```{r}
+par(mfrow = c(2,1))
+plot(forecast(Model1,h=12,level=c(99.5)))
+plot(forecast(Model2,h=12,level=c(99.5)))
+plot(forecast(Model3,h=12,level=c(99.5)))
+plot(forecast(Model4,h=12,level=c(99.5)))
+```
+
